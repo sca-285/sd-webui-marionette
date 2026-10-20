@@ -1,6 +1,6 @@
 # Marionette — 3D posing for ControlNet
 
-A 3D pose editor for **Forge**, **reForge** and **Forge Neo**. Pose rigged characters, frame them with a camera, and send OpenPose / Depth / Normal / Canny / Seg maps straight into ControlNet.
+Inspired by 3D Openpose Editor. Marionette is a 3D pose editor for **Forge**, **reForge** and **Forge Neo**. Pose rigged characters, frame them with a camera, and send OpenPose / Depth / Normal / Canny / Seg maps straight into ControlNet.
 
 ![Editor](docs/editor.jpg)
 
@@ -36,4 +36,3 @@ Press `/` to search for any setting by name.
 ## Notes
 - The realistic base bodies come from Blender Studio's *Human Base Meshes* (CC0) and were auto-rigged for this extension. The stylised bodies in that pack are not included.
 - Adult content is opt-in, hidden by default, and only for adult characters.
-- Full documentation in Vietnamese: [README.vi.md](README.vi.md).

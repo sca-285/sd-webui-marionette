@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marionette</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.js",
+    "three/addons/": "./vendor/three/addons/",
+    "@pixiv/three-vrm": "./vendor/three-vrm/three-vrm.module.js",
+    "three-mesh-bvh": "./vendor/three-mesh-bvh/index.module.js",
+    "three-bvh-csg": "./vendor/three-bvh-csg/index.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+  <main id="viewport">
+    <div id="stage">
+      <canvas id="view"></canvas>
+      <canvas id="overlay"></canvas>
+      <div id="panes"></div>
+      <div id="cropBox" hidden></div>
+      <div id="selBox" hidden></div>
+    </div>
+    <div id="outliner"></div>
+    <div id="poseLib" hidden></div>
+    <span id="perfOut" hidden></span>
+    <div id="hud">
+      <span id="sel">No bone selected</span>
+      <span id="viewHud"></span>
+      <button id="refChip" title="Remove the reference photo" hidden>Reference photo ✕</button>
+      <span id="modalHud"></span>
+      <span id="tagsHud"></span>
+    </div>
+    <input id="pickColor" type="color" style="position:absolute;width:0;height:0;opacity:0;pointer-events:none">
+    <div id="toolbar">
+      <span class="seg" id="appModes">
+        <button data-app="pose" class="on" title="Pose the character">Pose</button>
+        <button data-app="object" title="Select and place props">Object</button>
+        <button data-app="edit" title="Edit the active prop's mesh (Tab)">Edit</button>
+      </span>
+      <span class="sep"></span>
+      <button data-mode="rotate" class="on" title="Rotate gizmo (Maya: E)">Rotate</button>
+      <button data-mode="translate" title="Move gizmo for hips / IK targets (T, Maya: W)">Move</button>
+      <button id="ikToggle" title="Drag hands/feet with IK (I)">IK</button>
+      <button id="spaceToggle" title="Local / world gizmo space (Q)">Local</button>
+      <button id="ctrlToggle" class="on" title="Show / hide the rig controls (H)">Controls</button>
+      <button id="colorCodeBtn" title="Colour IDs: every character and every object in a colour of its own (viewport and Shaded output)">Colour IDs</button>
+      <span class="sep"></span>
+      <span class="seg" id="viewLayouts" title="View layout (Space: maximise the pane under the mouse / back)">
+        <button data-layout="single" class="on" title="One view">1</button>
+        <button data-layout="two" title="Two views side by side">2</button>
+        <button data-layout="quad" title="Four views">4</button>
+      </span>
+      <button id="camView" class="on" title="Look through the shot camera (Numpad 0)">Camera view</button>
+      <button id="alignCam" title="Move the shot camera to this view (Ctrl+Alt+Numpad 0)">Cam ← view</button>
+      <button id="cropTool" title="Drag a frame to crop (K)">Crop</button>
+      <span class="sep"></span>
+      <button id="undo" title="Undo (Ctrl+Z)">Undo</button>
+      <button id="redo" title="Redo (Ctrl+Y)">Redo</button>
+      <span class="sep"></span>
+      <button id="capture" class="primary" title="Render every enabled pass from this camera (C)">Capture</button>
+      <button id="send" class="primary" title="Send captured passes to ControlNet">Send</button>
+    </div>
+    <div id="toast" hidden></div>
+  </main>
+
+  <aside id="side">
+    <div id="sideHead">
+      <nav id="sideTabs" aria-label="Panels"></nav>
+      <div id="sideFind"><input id="findSetting" type="search" placeholder="Find a setting… (/)" autocomplete="off"><div id="findResults" hidden></div></div>
+    </div>
+    <details open data-tab="character">
+      <summary>Model</summary>
+      <div class="row" id="sceneOps">
+        <button id="sceneNew" title="Start over: one default character, no props (the current scene is kept as a backup)">New scene</button>
+        <button id="sceneSave" title="Download the whole scene as a .json file">Save…</button>
+        <label class="btn" title="Open a scene .json file">Open…<input id="sceneOpen" type="file" accept=".json,application/json" hidden></label>
+        <button id="sceneRestore" title="Bring back the scene that was there before New scene / Open" disabled>Restore previous</button>
+      </div>
+      <label>Model <select id="modelSelect"></select></label>
+      <label class="file">Open file (.glb .vrm .fbx)<input id="modelFile" type="file" accept=".glb,.gltf,.vrm,.fbx"></label>
+      <div id="modelInfo" class="muted"></div>
+    </details>
+
+    <details open id="extrasPanel" data-tab="character">
+      <summary>Extras · any model</summary>
+      <div class="muted">Horns and animal ears for every character; genitals for loaded models and the base meshes (the mannequin has its own in Body).</div>
+      <div class="row">
+        <label>Horns <select id="xHorns"></select></label>
+        <label>Ears <select id="xEars"></select></label>
+      </div>
+      <div id="xGenitalsBox">
+        <div class="row">
+          <label>Genitals <select id="xGenitals">
+            <option value="none">None</option><option value="female">Female</option><option value="male">Male</option>
+          </select></label>
+          <label id="xErectRow">State <select id="xErect"><option value="0">Flaccid</option><option value="1">Erect</option></select></label>
+        </div>
+        <label id="xGSizeRow">Size <output id="xGSizeOut"></output><input id="xGSize" type="range" min="0" max="1" step="0.01" value="0.5"></label>
+        <label class="check"><input id="xPubic" type="checkbox"> Pubic hair</label>
+      </div>
+    </details>
+
+    <details open id="bodyPanel" data-tab="character">
+      <summary>Body (built-in mannequin)</summary>
+      <label>Detail <select id="bDetail">
+        <option value="simple">Simple · wooden mannequin (fastest)</option>
+        <option value="standard">Standard · smooth body (default)</option>
+        <option value="high">High · dense mesh, anatomy, sculpted hands</option>
+      </select></label>
+      <div class="grid3" id="bodyPresets"></div>
+      <div id="bodySliders"></div>
+      <div class="sub">Anatomy</div>
+      <div class="row">
+        <label>Genitals <select id="bGenitals">
+          <option value="none">None</option><option value="female">Female</option><option value="male">Male</option>
+        </select></label>
+        <label id="bErectRow">State <select id="bErect">
+          <option value="0">Flaccid</option><option value="1">Erect</option>
+        </select></label>
+      </div>
+      <label id="bGSizeRow">Size <output id="bGSizeOut"></output><input id="bGSize" type="range" min="0" max="1" step="0.01"></label>
+      <label class="check"><input id="bNipples" type="checkbox"> Nipples</label>
+      <label class="check"><input id="bPubic" type="checkbox"> Pubic hair</label>
+      <div class="sub">Hair</div>
+      <div class="row">
+        <select id="bHair"></select>
+        <label class="check"><input id="bBangs" type="checkbox"> Bangs</label>
+      </div>
+      <label>Facial hair <select id="bBeard"></select></label>
+      <div class="sub">Extras</div>
+      <div class="row">
+        <label>Arms <select id="bArms"><option>2</option><option>4</option><option>6</option></select></label>
+        <label>Wings <select id="bWings">
+          <option value="none">None</option><option value="feathered">Feathered</option><option value="bat">Bat</option>
+        </select></label>
+      </div>
+      <label class="check"><input id="bTail" type="checkbox"> Tail</label>
+      <div class="grid2" id="wingPresets"></div>
+    </details>
+
+    <details open data-tab="pose">
+      <summary>Pose</summary>
+      <button id="openPoseLib" class="primary" title="Browse, save and apply poses with previews (L)">Pose library (L)</button>
+      <div class="grid2" id="posePresets"></div>
+      <div class="row">
+        <button id="resetBone">Reset bone</button>
+        <button id="resetPose">Reset all</button>
+      </div>
+      <div class="row">
+        <button id="mirrorLR" title="Copy left side to right">Mirror L→R</button>
+        <button id="mirrorRL" title="Copy right side to left">Mirror R→L</button>
+        <button id="flipPose">Flip</button>
+      </div>
+      <div class="sub">IK &amp; contact</div>
+      <label class="check" title="Joints only bend the way a real body can (elbows and knees one way, limited shoulder, hip, spine, wrist and finger range)"><input id="jointLimits" type="checkbox" checked> Anatomical joint limits</label>
+      <label class="check"><input id="pinFeet" type="checkbox" checked> Pin feet when moving the hips</label>
+      <label class="check"><input id="liveMirror" type="checkbox"> Live mirror (symmetric posing)</label>
+      <label class="check"><input id="ikSnap" type="checkbox" checked> IK targets stick to prop surfaces</label>
+      <label class="check" title="While you pose the upper body, the hips shift so the body's weight stays over the planted feet (Cascadeur-style)"><input id="autoBalance" type="checkbox"> Auto balance (weight over the feet)</label>
+      <label class="check" title="Dragging a hand IK target beyond arm's reach bends and turns the spine toward it"><input id="spineFollow" type="checkbox" checked> Spine follows a reaching hand</label>
+      <div class="row">
+        <button id="standOn" title="Lower or raise the character so its feet rest on what is below them">Stand on surface</button>
+        <button id="sitOn" title="Sit on the chair / bed / bench under the hips; feet go to the floor">Sit on prop below</button>
+      </div>
+      <div class="muted">IK mode (I): cubes move hands/feet, small diamonds aim elbows and knees.</div>
+      <div class="sub">Animation</div>
+      <div class="row">
+        <select id="animClip" title="Animation clips: the model's own, or from loaded animation files"></select>
+        <label class="btn" title="Load an animation file (.fbx / .glb, e.g. from Mixamo): retargeted onto the active character">Load…<input id="animFile" type="file" accept=".fbx,.glb,.gltf" hidden></label>
+      </div>
+      <div class="row anim-row">
+        <button id="animPlay" title="Play / pause">▶</button>
+        <input id="animTime" type="range" min="0" max="1" step="0.001" value="0" title="Scrub to pick a frame">
+        <output id="animFrame">–</output>
+      </div>
+      <label class="check"><input id="animInPlace" type="checkbox" checked> Keep the character where it stands</label>
+      <button id="animToLib" title="Save the current frame as a pose in the library">Save frame to pose library</button>
+      <div class="sub">Face (OpenPose face points)</div>
+      <label>Mouth open <output id="faceOpenOut"></output><input id="faceOpen" data-face="open" type="range" min="0" max="1" step="0.01" value="0"></label>
+      <label>Smile <output id="faceSmileOut"></output><input id="faceSmile" data-face="smile" type="range" min="0" max="1" step="0.01" value="0"></label>
+      <label>Eyes closed <output id="faceBlinkOut"></output><input id="faceBlink" data-face="blink" type="range" min="0" max="1" step="0.01" value="0"></label>
+      <label>Brows <output id="faceBrowsOut"></output><input id="faceBrows" data-face="brows" type="range" min="-1" max="1" step="0.01" value="0"></label>
+      <div class="row">
+        <button id="lookCam" title="Turn neck and head toward the shot camera">Head → camera</button>
+        <label class="check"><input id="eyesFollow" type="checkbox" checked> Eyes follow camera</label>
+      </div>
+      <label class="check"><input id="fingerHandles" type="checkbox"> Always show finger controls</label>
+      <label>Control colours <select id="ctrlScheme"></select></label>
+      <div class="sub">Hands</div>
+      <div class="hands">
+        <div><span>Left</span><select id="handL"></select></div>
+        <div><span>Right</span><select id="handR"></select></div>
+      </div>
+      <label>Left curl <input id="curlL" type="range" min="0" max="1" step="0.01" value="0"></label>
+      <label>Right curl <input id="curlR" type="range" min="0" max="1" step="0.01" value="0"></label>
+      <div class="sub">Pose from image</div>
+      <div class="row">
+        <label class="btn" title="Detect people in a photo or render (uses the WebUI's ControlNet DWPose / OpenPose)">Detect from image<input id="detectImg" type="file" accept="image/*"></label>
+        <label class="btn" title="OpenPose JSON from ControlNet's editor / preview or any OpenPose tool">OpenPose JSON<input id="importJSON" type="file" accept=".json"></label>
+      </div>
+      <label class="check"><input id="matchImgSize" type="checkbox" checked> Match output size to the image</label>
+      <div class="row">
+        <label class="check"><input id="keepDetectRef" type="checkbox" checked> Keep the photo as a see-through reference</label>
+        <button id="detectClear" title="Remove the reference photo from the view" hidden>Remove photo</button>
+      </div>
+      <div class="row">
+        <button id="flipDepth" title="Swap the selected bone between in front of / behind its joint as seen from the camera; the silhouette stays the same (D)">Flip depth</button>
+        <span class="muted">One photo can't tell front from back: fix limbs with D.</span>
+      </div>
+      <div class="row">
+        <button id="savePose">Save pose</button>
+        <label class="btn">Load pose<input id="loadPose" type="file" accept=".json"></label>
+      </div>
+    </details>
+
+    <details open id="propsPanel" data-mode="pose" data-tab="props">
+      <summary>Props &amp; modeling</summary>
+      <div class="muted">Pick <b>Object</b> or <b>Edit</b> in the toolbar to work on props.</div>
+      <div class="row">
+        <select id="propCat"></select>
+        <select id="propItem"></select>
+        <button id="propAdd" class="primary">Add</button>
+      </div>
+      <label class="check" title="Weapons and other hand-held props go into the active character's hand (Outliner ••• to switch hands or let go)"><input id="propAutoHold" type="checkbox" checked> Put hand-held props in the character's hand</label>
+      <div class="model-only">
+        <div class="sub">Transform</div>
+        <span class="seg" id="propTools">
+          <button data-tool="translate" class="on" title="G">Move</button>
+          <button data-tool="rotate" title="R">Rotate</button>
+          <button data-tool="scale" title="S">Scale</button>
+        </span>
+        <div class="row">
+          <label>Pivot <select id="pivotMode" title="Point that rotate / scale act around (Blender: Transform Pivot Point)">
+            <option value="median">Median point</option>
+            <option value="active">Active element</option>
+            <option value="individual">Individual origins</option>
+            <option value="world">World origin</option>
+          </select></label>
+          <button id="pivotEdit" title="Move / turn the object's own pivot without moving it (D or Insert, like Maya)">Edit pivot (D)</button>
+        </div>
+        <div class="row">
+          <label>Snap pivot to <select id="pivotSnap" title="While editing the pivot: drag snaps to the nearest point, a click on a surface puts the pivot there">
+            <option value="off">Off (click = surface point)</option>
+            <option value="vertex">Vertex</option>
+            <option value="edge">Edge centre</option>
+            <option value="face">Face centre</option>
+            <option value="origin">Object origin</option>
+            <option value="grid">Grid (5 cm)</option>
+          </select></label>
+          <button data-op="resetPivot" title="Put the pivot back where the object was created with it">Reset pivot</button>
+        </div>
+        <label class="check"><input id="propSnap" type="checkbox"> Snap (5 cm · 15° · ×0.1)</label>
+        <div class="xform" id="propXform">
+          <span>Pos</span><input data-k="p0" type="number" step="0.05"><input data-k="p1" type="number" step="0.05"><input data-k="p2" type="number" step="0.05">
+          <span>Rot °</span><input data-k="r0" type="number" step="5"><input data-k="r1" type="number" step="5"><input data-k="r2" type="number" step="5">
+          <span>Scale</span><input data-k="s0" type="number" step="0.1"><input data-k="s1" type="number" step="0.1"><input data-k="s2" type="number" step="0.1">
+        </div>
+        <div class="sub">Object</div>
+        <div class="grid3">
+          <button data-op="duplicate" title="Shift+D">Duplicate</button>
+          <button data-op="remove" title="X / Delete">Delete</button>
+          <button data-op="join" title="Ctrl+J">Join</button>
+          <button data-op="copy" title="Ctrl+C">Copy</button>
+          <button data-op="paste" title="Ctrl+V">Paste</button>
+          <button data-op="dropToFloor">To floor</button>
+          <button data-op="applyTransform" title="Ctrl+A">Apply rot/scale</button>
+          <button data-op="setOrigin" data-arg="base" title="Origin to the bottom centre of the geometry">Origin → base</button>
+          <button data-op="setOrigin" data-arg="center" title="Origin to the centre of the geometry">Origin → center</button>
+          <button data-op="setOrigin" data-arg="world" title="Origin to the world origin (0, 0, 0)">Origin → world</button>
+          <button data-op="setOrigin" data-arg="selection" title="Origin to the selected vertices (Edit mode)">Origin → selected</button>
+          <button data-op="showHidden" title="Alt+H">Show hidden</button>
+          <button data-op="mirror" data-arg="0">Mirror X</button>
+          <button data-op="mirror" data-arg="1">Mirror Y</button>
+          <button data-op="mirror" data-arg="2">Mirror Z</button>
+        </div>
+        <div class="row">
+          <label class="check">Colour <input id="propColor" type="color" value="#9aa5b1"></label>
+          <label>Seg class <select id="propSeg"></select></label>
+        </div>
+        <div class="sub">Boolean · cut / merge solids</div>
+        <div class="muted">Select the cutter(s), then Shift+click the object to keep (active) last.</div>
+        <div class="grid3">
+          <button data-op="boolean" data-arg="union">Union</button>
+          <button data-op="boolean" data-arg="difference">Difference</button>
+          <button data-op="boolean" data-arg="intersect">Intersect</button>
+        </div>
+        <label class="check"><input id="keepCutter" type="checkbox"> Keep cutters (hidden)</label>
+      </div>
+      <div class="edit-only">
+        <div class="sub">Paint</div>
+        <div class="row">
+          <label class="check">Colour <input id="paintColor" type="color" value="#d64545"></label>
+          <button id="paintFaces" title="Paint the selected faces (face select mode makes picking easier)">Paint selected faces</button>
+          <button id="clearPaint" title="Remove the paint from the selected faces, or from all faces when none is selected">Clear paint</button>
+        </div>
+        <div class="sub">Edit mesh</div>
+        <span class="seg" id="selModes">
+          <button data-sel="vert" class="on" title="1">Vertex</button>
+          <button data-sel="edge" title="2">Edge</button>
+          <button data-sel="face" title="3">Face</button>
+        </span>
+        <label>Amount / width (m) <input id="editAmount" type="number" step="0.01" value="0.2"></label>
+        <div class="grid3">
+          <button data-op="extrude" title="E">Extrude</button>
+          <button data-op="inset" title="I">Inset</button>
+          <button data-op="bevel" title="Ctrl+B">Bevel</button>
+          <button data-op="subdivide">Subdivide</button>
+          <button data-op="connect" title="J">Connect</button>
+          <button data-op="merge" title="M">Merge</button>
+          <button data-op="fill" title="F">Fill</button>
+          <button data-op="remove" title="X">Delete</button>
+          <button data-op="separate" title="P">Separate</button>
+          <button data-op="duplicateSel" title="Shift+D">Duplicate</button>
+          <button data-op="flip">Flip normals</button>
+          <button data-op="selectAll" title="A">Select all</button>
+        </div>
+        <div class="row">
+          <label>Slice <select id="sliceAxis"><option value="0">X</option><option value="1" selected>Y</option><option value="2">Z</option></select></label>
+          <label>× <input id="sliceCount" type="number" min="1" max="32" value="1"></label>
+          <button id="sliceBtn" title="Loop-cut style slices through the selection (or object)">Cut</button>
+        </div>
+      </div>
+      <div class="model-only">
+        <div class="sub">Deform · bend, twist, taper</div>
+        <div class="row">
+          <select id="defKind"><option value="bend">Bend</option><option value="twist">Twist</option><option value="taper">Taper</option></select>
+          <label>Axis <select id="defAxis"><option value="0">X</option><option value="1" selected>Y</option><option value="2">Z</option></select></label>
+          <label>Toward <select id="defDir"><option value="0">X</option><option value="1">Y</option><option value="2" selected>Z</option></select></label>
+        </div>
+        <div class="row">
+          <label>Angle ° / factor <input id="defAmount" type="number" step="5" value="45"></label>
+          <label>Segments <input id="defSeg" type="number" min="0" max="64" value="12"></label>
+          <button id="defApply">Apply</button>
+        </div>
+      </div>
+      <label class="check"><input id="maskCharOnly" type="checkbox" checked> Mask pass: character only</label>
+      <details class="keys-help">
+        <summary class="muted">Modeling shortcuts</summary>
+        <table class="keys">
+          <tr><td>Tab</td><td>Object ↔ Edit</td></tr>
+          <tr><td>G / R / S</td><td>Move / rotate / scale (Maya: W / E / R)</td></tr>
+          <tr><td>1 2 3</td><td>Vertex / edge / face select</td></tr>
+          <tr><td>Click · Shift+click · B</td><td>Select · add · box select</td></tr>
+          <tr><td>A / Alt+A</td><td>Select all / none</td></tr>
+          <tr><td>E · I · Ctrl+B</td><td>Extrude · inset · bevel (Maya: Ctrl+E extrude)</td></tr>
+          <tr><td>J · M · F</td><td>Connect · merge · fill</td></tr>
+          <tr><td>Shift+D · X · P</td><td>Duplicate · delete · separate</td></tr>
+          <tr><td>Ctrl+J · Ctrl+A</td><td>Join · apply rotation/scale</td></tr>
+          <tr><td>Ctrl+C / Ctrl+V</td><td>Copy / paste props (across editors)</td></tr>
+          <tr><td>H / Alt+H</td><td>Hide / show props</td></tr>
+        </table>
+      </details>
+    </details>
+
+    <details open data-tab="camera">
+      <summary>Camera</summary>
+      <div class="sub">Frame (aspect ratio)</div>
+      <div class="aspects" data-aspects></div>
+      <div class="sub">Shot composer</div>
+      <label>Shot size <select id="shotSize"></select></label>
+      <div class="row">
+        <label>Angle <select id="shotAngle"></select></label>
+        <label>Direction <select id="shotDir"></select></label>
+      </div>
+      <div class="row">
+        <label>Lens <select id="shotLens"></select></label>
+        <label>Dutch <select id="shotDutch"></select></label>
+      </div>
+      <div class="row">
+        <label>Placement <select id="shotPlace"></select></label>
+        <label>Subject <select id="shotSubject"><option value="active">Active character</option><option value="all">All characters</option></select></label>
+      </div>
+      <div class="row">
+        <button id="frameShot" class="primary">Frame shot</button>
+        <button id="resetCrop">Reset crop</button>
+      </div>
+      <label>FOV <output id="fovOut"></output><input id="fov" type="range" min="6" max="110" step="0.5" value="40"></label>
+      <label>Dutch / roll <output id="rollOut"></output><input id="roll" type="range" min="-45" max="45" step="1" value="0"></label>
+      <div class="sub">Camera object</div>
+      <div class="row">
+        <button id="selCam" title="Select the shot camera: W moves it, E turns it (switches to the free view)">Select camera</button>
+        <button id="selAim" title="Select the aim / focal point the camera looks at: W moves it">Select aim point</button>
+      </div>
+      <div class="xform" id="camXform">
+        <span>Position</span><input data-k="p0" type="number" step="0.05"><input data-k="p1" type="number" step="0.05"><input data-k="p2" type="number" step="0.05">
+        <span>Aim point</span><input data-k="a0" type="number" step="0.05"><input data-k="a1" type="number" step="0.05"><input data-k="a2" type="number" step="0.05">
+      </div>
+      <div class="row">
+        <label>Lens mm <input id="camMM" type="number" min="6" max="800" step="1"></label>
+        <label>Distance <input id="camDist" type="number" min="0.1" step="0.05" title="Camera to aim point; changing it dollies the camera"></label>
+      </div>
+      <div class="row">
+        <label>Near clip <input id="camNear" type="number" min="0.001" step="0.01"></label>
+        <label>Far clip <input id="camFar" type="number" min="1" step="1"></label>
+      </div>
+      <label class="check"><input id="camKeepAim" type="checkbox"> Moving the camera keeps its aim point (orbits it)</label>
+      <label class="check"><input id="optGuides" type="checkbox" checked> Rule-of-thirds guides</label>
+      <div class="sub">Reference image (viewport only)</div>
+      <div class="row">
+        <label class="btn">Open image<input id="refFile" type="file" accept="image/*"></label>
+        <button id="refLast" title="The latest image in the txt2img / img2img gallery">Last generated</button>
+        <button id="refClear">Clear</button>
+      </div>
+      <label>Opacity <output id="refOpacityOut"></output><input id="refOpacity" type="range" min="0" max="1" step="0.05" value="0.5"></label>
+      <div class="row">
+        <input id="viewName" placeholder="View name">
+        <button id="saveView">Save view</button>
+      </div>
+      <div id="views"></div>
+      <div class="sub">Shot tags</div>
+      <textarea id="tags" rows="2" readonly></textarea>
+      <div class="row">
+        <select id="tagStyle">
+          <option value="danbooru">Danbooru tags</option>
+          <option value="natural">Natural language</option>
+        </select>
+        <button id="copyTags">Copy</button>
+        <button id="appendTags">Add to prompt</button>
+      </div>
+    </details>
+
+    <details open data-tab="light">
+      <summary>Lighting</summary>
+      <div class="row">
+        <label>Preset <select id="lightPreset"></select></label>
+      </div>
+      <div class="seg" id="lightPick">
+        <button data-light="key" class="on">Key</button><button data-light="fill">Fill</button><button data-light="rim">Rim</button>
+      </div>
+      <div class="light-ball-row">
+        <canvas id="lightBall" width="132" height="132" title="Click: light from the front half · Shift+click: from behind · drag to move"></canvas>
+        <div class="light-props">
+          <label class="check"><input id="lightOn" type="checkbox" checked> On</label>
+          <label>Intensity <output id="lightIOut"></output><input id="lightI" type="range" min="0" max="5" step="0.05"></label>
+          <label>Color <input id="lightColor" type="color"></label>
+        </div>
+      </div>
+      <label>Direction <output id="lightAzVOut"></output><input id="lightAzV" type="range" min="-180" max="180" step="1"></label>
+      <label>Height <output id="lightElVOut"></output><input id="lightElV" type="range" min="-90" max="90" step="1"></label>
+      <label>Ambient <output id="ambientOut"></output><input id="ambient" type="range" min="0" max="2" step="0.05"></label>
+      <div class="row">
+        <label>Sky <input id="skyColor" type="color"></label>
+        <label>Ground <input id="groundColor" type="color"></label>
+      </div>
+      <label class="check"><input id="lightShadows" type="checkbox"> Shadows (key light, on the floor too)</label>
+      <label class="check" title="Directions are measured from the shot camera's view, so the lighting stays the same while you orbit"><input id="lightFollowCam" type="checkbox"> Lights follow the camera</label>
+      <label class="check"><input id="lightHandles" type="checkbox" checked> Show light handles in free / ortho views</label>
+      <div class="muted">Handles: click the bulb in a free or ortho view, then W / G to drag the light around the subject. The Shaded pass renders with these lights; the Light pass follows the key light.</div>
+    </details>
+
+    <details open data-tab="settings">
+      <summary>Viewport &amp; shortcuts</summary>
+      <label>Navigation <select id="navScheme">
+        <option value="simple">Simple (LMB orbit, RMB pan)</option>
+        <option value="blender">Blender (MMB orbit, Shift+MMB pan)</option>
+        <option value="maya">Maya (Alt + LMB/MMB/RMB)</option>
+      </select></label>
+      <label class="check"><input id="zoomCursor" type="checkbox" checked> Zoom toward the cursor</label>
+      <label title="Lower = smoother on slow GPUs and high-DPI screens; captures are always full quality">Viewport quality <select id="renderScale">
+        <option value="high">Sharp (up to 2×)</option>
+        <option value="auto" selected>Balanced (up to 1.5×)</option>
+        <option value="fast">Fast (1×)</option>
+        <option value="fastest">Fastest (0.75×)</option>
+      </select></label>
+      <label class="check"><input id="perfHud" type="checkbox"> Show FPS / timing</label>
+      <label>Transform keys <select id="keyScheme">
+        <option value="maya">Maya: W move · E rotate · R scale (+ G / S modal)</option>
+        <option value="blender">Blender: G / R / S modal</option>
+      </select></label>
+      <table class="keys">
+        <tr><td>Numpad 0</td><td>Camera view / free view</td></tr>
+        <tr><td>Ctrl+Alt+Numpad 0</td><td>Shot camera ← current view</td></tr>
+        <tr><td>Numpad 1 / 3 / 7</td><td>Front / right / top (Ctrl: opposite)</td></tr>
+        <tr><td>Numpad 2 4 6 8</td><td>Orbit 15°</td></tr>
+        <tr><td>Numpad . or F</td><td>Frame selected bone</td></tr>
+        <tr><td>Home or A</td><td>Frame whole character</td></tr>
+        <tr><td>Space</td><td>Maximise the view under the mouse / back to 2 or 4 views</td></tr>
+        <tr><td colspan="2"><b>Blender keys</b> (or G / S in Maya keys)</td></tr>
+        <tr><td>G / R / S</td><td>Move / rotate / scale with the mouse</td></tr>
+        <tr><td>&nbsp;then X Y Z</td><td>Lock axis (twice = local, Shift = all but)</td></tr>
+        <tr><td>&nbsp;then 0-9 . −</td><td>Type an exact value (m, °, ×)</td></tr>
+        <tr><td>&nbsp;Ctrl · click/Enter · Esc/RMB</td><td>Snap · confirm · cancel</td></tr>
+        <tr><td>Alt+G / R / S</td><td>Clear location / rotation / scale</td></tr>
+        <tr><td colspan="2"><b>Maya keys</b></td></tr>
+        <tr><td>W / E / R</td><td>Move / rotate / scale manipulator (W on a bone drags that joint)</td></tr>
+        <tr><td>D or Insert</td><td>Edit the object's pivot (Object mode)</td></tr>
+        <tr><td colspan="2"><b>All</b></td></tr>
+        <tr><td>T</td><td>Bone gizmo: move ↔ rotate</td></tr>
+        <tr><td>I · Q · K · C</td><td>IK · local/world · crop · capture</td></tr>
+        <tr><td>H</td><td>Show / hide rig controls (pose mode)</td></tr>
+        <tr><td>L</td><td>Pose library (pose mode)</td></tr>
+        <tr><td>Click the body</td><td>Select the nearest bone</td></tr>
+        <tr><td>Ctrl+Z / Ctrl+Y</td><td>Undo / redo</td></tr>
+      </table>
+    </details>
+
+    <details open data-tab="output">
+      <summary>Output</summary>
+      <div class="row">
+        <label>W <input id="outW" type="number" min="64" max="4096" step="8" value="832"></label>
+        <label>H <input id="outH" type="number" min="64" max="4096" step="8" value="1216"></label>
+      </div>
+      <div class="aspects" data-aspects></div>
+      <label class="check"><input id="followSize" type="checkbox" checked> Follow WebUI width/height</label>
+      <label class="check" title="On Send, each ControlNet unit gets the control type of its pass (OpenPose, Depth, NormalMap, Canny, Segmentation), Preprocessor None (the images already are control maps) and, if none is chosen, a matching model"><input id="cnAuto" type="checkbox" checked> Set ControlNet type, preprocessor and model on Send</label>
+      <label id="targetRow">Send to <select id="targetTab">
+        <option value="txt2img">txt2img</option>
+        <option value="img2img">img2img</option>
+      </select></label>
+      <div class="row">
+        <label>ControlNet preset <select id="cnPreset"></select></label>
+        <button id="cnApply">Apply</button>
+      </div>
+      <div id="cnHint" class="muted"></div>
+      <table id="passTable">
+        <thead><tr><th></th><th>Pass</th><th>CN unit</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="opts">
+        <label class="check"><input id="optHands" type="checkbox" checked> OpenPose hands</label>
+        <label class="check"><input id="optFace" type="checkbox" checked> OpenPose face (eyes, ears, nose)</label>
+        <label class="check"><input id="optFace70" type="checkbox" checked> OpenPose 70-point face</label>
+ <label class="check"><input id="optExtras" type="checkbox" checked> OpenPose: extra arms</label>
+        <label class="check"><input id="optFlipX" type="checkbox" checked> Normal: red = left</label>
+        <label class="check"><input id="optFlipY" type="checkbox"> Normal: flip green</label>
+        <label class="check"><input id="optOverlay" type="checkbox" checked> OpenPose overlay in viewport</label>
+        <div class="row">
+          <label>Seg background <select id="segBg">
+            <option value="">Black</option><option value="wall">Wall</option><option value="sky">Sky</option><option value="floor">Floor</option>
+          </select></label>
+        </div>
+        <label class="check"><input id="lightFollowKey" type="checkbox" checked> Light pass uses the key light (Lighting panel)</label>
+        <label>Light direction <output id="lightAzOut"></output><input id="lightAz" type="range" min="-180" max="180" step="5" value="45"></label>
+        <label>Light height <output id="lightElOut"></output><input id="lightEl" type="range" min="-30" max="90" step="5" value="35"></label>
+      </div>
+      <label class="check"><input id="autoSend" type="checkbox"> Capture + send automatically on Generate</label>
+      <label class="check"><input id="linkEditors" type="checkbox" checked> Sync pose and camera with other editors</label>
+      <div id="thumbs"></div>
+      <div class="row">
+        <button id="downloadAll">Download all</button>
+        <button id="downloadJSON">OpenPose JSON</button>
+      </div>
+    </details>
+  </aside>
+</div>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # Marionette: 3D Pose cho Forge / reForge / Forge Neo
 
-*(Tên cũ: Rigged Pose Editor.)*
+
 
 Editor tạo dáng 3D dùng **model thật có rig** (GLB, VRM, FBX Mixamo, VRoid, Rigify, UE). Chụp từ góc camera bạn đặt, xuất ra map ControlNet: **OpenPose (kèm tay), Depth, Normal, Canny/Lineart, Mask, Shaded**.
 
